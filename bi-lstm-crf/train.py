@@ -1,12 +1,12 @@
 import torch
+import time
+import os
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from datasets import load_dataset
 from model import BiLSTM_CRF
 import torch.optim as optim
 from seqeval.metrics import f1_score, classification_report
-import time
-import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -59,8 +59,19 @@ def collate_fn(batch):
     # 이렇게 하면 CRF는 해당 지점의 Loss를 계산하지 않음
     mask = (labels_padded != -100)
 
+    # BERT의 첫 번째 토큰은 무조건 [CLS]이므로 인덱스 0입니다.
+    # 이 부분의 마스크를 강제로 True로 바꿔줍니다.
+    mask[:, 0] = True
+    
+    # [CLS]의 라벨이 -100이면 에러가 나므로, 의미 없는 태그인 'O' (pad_tag_id)를 할당합니다.
+    # (학습에 큰 영향 없이 CRF가 시작점을 잡을 수 있게 해줍니다.)
+    labels_padded[:, 0] = pad_tag_id
+
     # 4. -100 값 치환 (CRF 에러 방지)
     # 마스크가 False인 곳은 계산 안하겠지만, 인덱스 에러 방지를 위해 'O' 태그 ID로 덮어씀
+
+    # 4. 나머지 -100 값 치환
+    labels_padded[labels_padded == -100] = pad_tag_id
 
     return input_ids_padded, labels_padded, mask
 
@@ -133,14 +144,18 @@ train_dataloader = DataLoader(
     tokenized_datasets['train'],
     batch_size=batch_size,
     shuffle=True,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    num_workers=4, # CPU 병렬 로딩
+    pin_memory=True # CPU에서 GPU로의 전송 가속
 )
 
 val_dataloader = DataLoader(
     tokenized_datasets["validation"],
     batch_size=batch_size,
     shuffle=False,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    num_workers=4, # CPU 병렬 로딩
+    pin_memory=True # CPU에서 GPU로의 전송 가속
 )
 
 sample_batch = next(iter(train_dataloader))
@@ -179,25 +194,30 @@ for epoch in range(10):
     model.train()
     total_loss = 0.0
     epoch_start = time.time()
-    optimizer.zero_grad()
+    
     for batch in train_dataloader:
         input_ids, tags, mask = batch
         input_ids = input_ids.to(device)
         tags = tags.to(device)
         mask = mask.to(device)
 
+        optimizer.zero_grad()
+
+        # 속도 증가를 위해 FP16 연산 적용
         loss = model(input_ids, tags, mask)
-        total_loss += loss.item()
         loss.backward()
 
+        # Gradient Clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
 
-    f1_score = evaluate(model, val_dataloader, id2label)
-    f1_list.append(f1_score)
-    print(f"{epoch+1} Loss : {total_loss/len(train_dataloader)}, F1-score : {f1_score:.4f}")
-    if f1_score > best_f1:
-        best_f1 = f1_score
+        total_loss += loss.item()
+
+    score = evaluate(model, val_dataloader, id2label)
+    f1_list.append(score)
+    print(f"{epoch+1} Loss : {total_loss/len(train_dataloader)}, F1-score : {score:.4f}")
+    if score > best_f1:
+        best_f1 = score
         print(f"Best F1-score was changed, Best F1-score is {best_f1:.4f}")
         print("Save Best model...")
         torch.save(model.state_dict(), path)
