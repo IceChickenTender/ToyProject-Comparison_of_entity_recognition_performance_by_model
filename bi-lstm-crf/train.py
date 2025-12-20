@@ -7,6 +7,8 @@ from datasets import load_dataset
 from model import BiLSTM_CRF
 import torch.optim as optim
 from seqeval.metrics import f1_score, classification_report
+from transformers import AutoModel
+import torch.nn as nn
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -158,15 +160,12 @@ val_dataloader = DataLoader(
     pin_memory=True # CPU에서 GPU로의 전송 가속
 )
 
-sample_batch = next(iter(train_dataloader))
-input_ids, tags, mask = sample_batch
+# BERT 모델 로드
+print(">>> BERT 임베딩 로드 중...")
+bert_model = AutoModel.from_pretrained(model_id)
 
-# print(f"Input IDs shape: {input_ids.shape}")  # [Batch, Seq_Len]
-# print(f"Tags shape:      {tags.shape}")       # [Batch, Seq_Len] (값에 -100이 없어야 함)
-# print(f"Mask shape:      {mask.shape}")       # [Batch, Seq_Len] (Boolean 타입이어야 함)
-#
-# print("\n[Sample Mask Check]")
-# print(mask[0]) # True/False로 구성되어 있는지 확인
+# BERT 임베딩 가중치 추출
+bert_embedding_weight = bert_model.embeddings.word_embeddings.weight
 
 vocab_size = tokenizer.vocab_size
 tag_to_ix = label2id
@@ -179,6 +178,14 @@ model = BiLSTM_CRF(
     embedding_dim = EMBEDDING_DIM,
     hidden_dim = HIDDEN_DIM
 )
+
+# Bi-LSTM-CRF 모델에 BERT 임베딩 가중치 복사
+model.word_embeds.weight = nn.Parameter(bert_embedding_weight.clone())
+
+# 선택 사항 임베딩 층 얼리기 vs 학습하기
+# True로 설정하면 BERT가 배운 그대로 고정되고, False면 NER 데이터에 맞춰 미세 조정됩니다.
+# 데이터가 충분한 KLUE NER의 경우 False(학습 허용)가 성능이 더 좋습니다
+model.word_embeds.weight.requires_grad = False
 
 model.to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
