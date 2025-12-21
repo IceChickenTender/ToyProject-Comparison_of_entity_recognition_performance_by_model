@@ -81,35 +81,43 @@ model = prepare_model_for_kbit_training(model)
 model = get_peft_model(model, peft_config)
 
 # 5. Trainer 설정 (SFTTrainer)
+# [수정 포인트 1] max_seq_length와 dataset_text_field는 이제 Config 안에 넣어야 합니다.
 training_args = SFTConfig(
     output_dir="./results",
     num_train_epochs=NUM_EPOCHS,
     per_device_train_batch_size=BATCH_SIZE,
     gradient_accumulation_steps=GRAD_ACCUMULATION,
-    optim="paged_adamw_32bit", # 메모리 효율적인 옵티마이저
+    optim="paged_adamw_32bit",
     save_steps=500,
     logging_steps=50,
     learning_rate=LEARNING_RATE,
     weight_decay=0.001,
     fp16=False,
-    bf16=True, # RTX 3090/4090 지원
+    bf16=True,
     max_grad_norm=0.3,
     warmup_ratio=0.03,
     group_by_length=True,
     lr_scheduler_type="cosine",
     report_to="tensorboard",
-    dataset_text_field="messages", # 데이터셋의 컬럼명 (trl 최신 버전 지원)
-    max_seq_length=MAX_SEQ_LENGTH,
-    packing=False, # True로 하면 여러 대화를 이어붙여 학습 (속도 빠르나 구현 복잡)
+    
+    # --- [중요] Config 안으로 이동한 파라미터들 ---
+    dataset_text_field="messages",  # 데이터셋의 텍스트 컬럼명
+    #max_seq_length=MAX_SEQ_LENGTH,  # 최대 길이 설정
+    max_length=MAX_SEQ_LENGTH,  # 최대 길이 설정
+    packing=False,
 )
 
 trainer = SFTTrainer(
-    model = model,
-    train_dataset = dataset["train"],
-    eval_dataset = dataset["validation"],
-    peft_config = peft_config,
-    tokenizer = tokenizer,
-    args = training_args,
+    model=model,
+    train_dataset=dataset["train"],
+    eval_dataset=dataset["validation"],
+    peft_config=peft_config,
+    
+    # [수정 포인트 2] tokenizer -> processing_class 로 이름 변경 (가장 중요!)
+    processing_class=tokenizer, 
+    
+    args=training_args,
+    # max_seq_length=MAX_SEQ_LENGTH,  <-- [삭제] 여기 있으면 에러 납니다!
 )
 
 # 6. 학습 시작
