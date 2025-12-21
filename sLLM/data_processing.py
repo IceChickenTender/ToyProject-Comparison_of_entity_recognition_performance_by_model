@@ -156,7 +156,7 @@ def json_to_bio(json_str, tokens):
             temp_tokens = "".join(tokens)
 
             # entity_text의 시작 위치 찾기
-            start_idx = temp_tokens.find(entity_text.replae(" ", ""))
+            start_idx = temp_tokens.find(entity_text.replace(" ", ""))
 
             if start_idx == -1: continue
 
