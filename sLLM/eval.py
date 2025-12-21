@@ -97,7 +97,7 @@ for i in tqdm(range(len(val_data))):
     decoded_output = tokenizer.decode(response, skip_special_tokens=True)
 
     # JSON -> BIO 변환
-    pred_bio = pr.json_to_bio(input_text, decoded_output, tokens, id2label)
+    pred_bio = pr.json_to_bio(decoded_output, tokens)
 
     true_labels.append(original_tags)
     pred_labels.append(pred_bio)
